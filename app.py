@@ -6,7 +6,6 @@ import shutil
 import re
 from copy import deepcopy
 from io import BytesIO
-from tqdm import tqdm
 import zipfile
 
 # ==========================================
@@ -20,7 +19,8 @@ st.markdown("""
 1. JSONテンプレートをアップロード  
 2. Excelデータをアップロード（形式は統一：1行目=正式名, 2行目=プレースホルダ, 4行目以降=データ）  
 3. 各行ごとにテンプレートを置換（材料の削除ルールや物性置換ルールも適用）  
-4. ZIP にまとめてダウンロード可能  
+4. アップロードしたJSON名ベースでファイル出力  
+5. ZIP にまとめてダウンロード可能  
 """)
 
 # ==========================================
@@ -62,6 +62,9 @@ if st.button("🚀 変換を実行", type="primary"):
             # JSONテンプレート読み込み
             json_template = json.load(json_file)
 
+            # アップロードしたJSONファイル名（拡張子なし）を取得
+            json_filename = os.path.splitext(os.path.basename(json_file.name))[0]
+
             # Excel読み込み（header=None で行指定）
             raw = pd.read_excel(excel_file, header=None)
 
@@ -84,7 +87,7 @@ if st.button("🚀 変換を実行", type="primary"):
             generated_files = []
 
             # データ行ごとに処理
-            for idx, row in tqdm(data.iterrows(), total=len(data)):
+            for idx, row in data.iterrows():
                 d = deepcopy(json_template)
 
                 # --- materials（最初のprocess） ---
@@ -122,7 +125,7 @@ if st.button("🚀 変換を実行", type="primary"):
                     d = json.loads(j_str)
 
                 # --- 保存 ---
-                output_path = os.path.join(output_dir, f"output_{idx}.json")
+                output_path = os.path.join(output_dir, f"{json_filename}_{idx}.json")
                 with open(output_path, "w", encoding="utf-8") as f:
                     json.dump(d, f, ensure_ascii=False, indent=2)
                 generated_files.append(output_path)
@@ -141,7 +144,7 @@ if st.button("🚀 変換を実行", type="primary"):
             st.download_button(
                 "📥 出力結果をダウンロード (ZIP)",
                 data=zip_buffer,
-                file_name="output_json.zip",
+                file_name=f"{json_filename}_output.zip",
                 mime="application/zip"
             )
 
