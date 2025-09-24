@@ -18,8 +18,8 @@ st.markdown("""
 このアプリでは以下の処理を行います：  
 This app performs the following steps:
 1. JSONテンプレートをアップロード / Upload JSON template  
-2. Excelデータをアップロード（形式は統一：1行目=正式名, 2行目=プレースホルダ, 4行目以降=データ）  
-   Upload Excel data (format fixed: row1=formal name, row2=placeholder, row4 onward=data)  
+2. Excelデータをアップロード（形式は統一：はじめの行の1行目は原料ヤプロセスの種類、2行目は=正式名(IUPACなど), 3行目=テンプレート記号(%XX%のようなもの), 4行目以降=データ）  
+   Upload Excel data (format must be standardized: the 1st row = type of raw material or process, the 2nd row = formal name (e.g., IUPAC), the 3rd row = template symbols (such as %XX%), and from the 4th row onward = data)
 3. 各行ごとにテンプレートを置換（材料の削除ルールや物性置換ルールも適用）  
    Replace template row by row (apply deletion/replace rules for materials/properties)  
 4. アップロードしたJSON名ベースでファイル出力  
