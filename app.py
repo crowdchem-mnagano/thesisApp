@@ -12,7 +12,7 @@ import zipfile
 # Streamlit UI
 # ==========================================
 st.set_page_config(page_title="Excel→JSON tool", layout="wide")
-st.title("Excel → JSON tool / Excel → JSON Tool")
+st.title("Excel → JSON tool ver2.8")
 
 st.markdown("""
 ### このアプリの機能 / About this tool
