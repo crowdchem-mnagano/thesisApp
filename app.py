@@ -31,7 +31,7 @@ This app performs the following steps:
    |------|------|
    | Excel に同じキーがある | 正常置換 |
    | Excel にキーがない | 🔶 warning に出す |
-   | `"value"` が空欄/NaN/"none" | ⚠️ `{}` ごと削除（CrowdChem仕様） |
+   | `"value"` または `"amount"` が空欄/NaN/"none" | ⚠️ `{}` ごと削除（CrowdChem仕様） |
    | `"unit"`, `"name"`, `"memo"` が空欄 | 無視（削除しない） |
    | JSON 内に `%…%` が残った | 🔴 error（%xx%が置換されませんでした） |
 """)
@@ -72,7 +72,7 @@ def validate_excel(raw):
 def replace_placeholders_recursively(obj, row, unmatched_keys):
     """
     JSON全体を再帰的に探索して、%…% をExcel値で置換。
-    "value" が空欄・NaN・none の場合のみ {} ごと削除（CrowdChem仕様）。
+    "value" と "amount" が空欄・NaN・none の場合のみ {} ごと削除（CrowdChem仕様）。
     unitやname,memoが空でも削除しない。
     """
     if isinstance(obj, dict):
@@ -93,8 +93,8 @@ def replace_placeholders_recursively(obj, row, unmatched_keys):
                     unmatched_keys.add(placeholder)
                     replaced = replaced  # 残す（後で未一致警告）
 
-            # --- 空欄削除ロジック（"value"キー限定） ---
-            if key == "value" and (pd.isna(replaced) or str(replaced).strip().lower() in ["", "none"]):
+            # --- 空欄削除ロジック（"value" または "amount" キー限定） ---
+            if key in ["value", "amount"] and (pd.isna(replaced) or str(replaced).strip().lower() in ["", "none"]):
                 return None  # ⚠️ CrowdChem仕様：{} ごと削除
             else:
                 new_dict[key] = replaced
