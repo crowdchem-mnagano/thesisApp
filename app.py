@@ -28,7 +28,7 @@ This app automatically generates JSON files using an Excel data file and a JSON 
    - 1行目: カテゴリ / Row 1: Category  
    - 2行目: 正式名 / Row 2: Formal name  
    - 3行目: プレースホルダ（必ず `%A1%` のような形式） / Row 3: Placeholders (must be in `%A1%` format)  
-   - 4行目: 略称（任意） / Row 4: Abbreviations (optional)  
+   - 4行目: 論文に載っている略称 / Row 4: Abbreviations written the paper  
    - 5行目以降: データ / Row 5 onward: Data values  
 
 #### 置換ルール / Replacement Rules:
