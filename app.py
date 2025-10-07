@@ -91,7 +91,6 @@ def replace_and_clean(obj_list, row, unmatched_keys):
             new_list.append(obj)
     return new_list
 
-
 # ==========================================
 # 実行ボタン
 # ==========================================
@@ -106,6 +105,7 @@ if st.button("🚀 変換を実行 / Run conversion", type="primary"):
 
             # === Excel読み込み ===
             raw = pd.read_excel(excel_file, header=None, dtype=str).fillna("")
+
             ok, msg = validate_excel(raw)
             if not ok:
                 st.error(msg)
@@ -114,7 +114,10 @@ if st.button("🚀 変換を実行 / Run conversion", type="primary"):
                 st.success(msg)
 
             # === Excelデータ準備 ===
-            labels = [str(x).strip() for x in raw.iloc[2]]  # 3行目の %xx%
+            labels = [str(x).strip() for x in raw.iloc[2]]  # 3行目（プレースホルダ行）を文字列として読み込み
+            # 🔧 ここで自動的に %...% 形式に補正（例: "A1" → "%A1%"）
+            labels = [("%" + x.strip("%") + "%") if not str(x).startswith("%") else str(x) for x in labels]
+
             data = raw.iloc[4:].reset_index(drop=True)
             data.columns = labels
 
