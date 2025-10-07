@@ -27,7 +27,7 @@ This app performs the following steps:
    Please ensure your Excel follows this fixed format:  
    - 1行目 / Row 1 → 材料カテゴリ (Category: Resin, Hardener, etc.)  
    - 2行目 / Row 2 → 正式名 (Formal name: IUPAC or trade name)  
-   - 3行目 / Row 3 → プレースホルダ (%Tg%, %viscosity%, etc.)  
+   - 3行目 / Row 3 → プレースホルダ (%A1%, %B1%, %P3%, etc.)  
    - 4行目 / Row 4 → 略称 (Abbreviation: optional, not used here)  
    - 5行目以降 / Row 5 onward → データ (Numeric or text data)
 
@@ -74,15 +74,14 @@ def validate_excel(raw):
 # ==========================================
 # プロパティ置換関数 / Property replacement function
 # ==========================================
-def fill_properties(props, row, mapping):
-    """複数物性（%...%）をすべて置換"""
+def fill_properties(props, row):
+    """Excel 3 行目の %xx% を列名として直接置換"""
     if not isinstance(props, list):
         return
     for prop in props:
         v = prop.get("value")
-        if isinstance(v, str) and v in mapping:
-            col = mapping[v]
-            val = row.get(col, "")
+        if isinstance(v, str) and v in row:
+            val = row[v]
             if pd.isna(val) or str(val).strip().lower() in ["", "none"]:
                 prop["value"] = ""
             else:
@@ -109,12 +108,10 @@ if st.button("🚀 変換を実行 / Run conversion", type="primary"):
             else:
                 st.success(msg)
 
-            # === データ抽出（正式名ベース） ===
-            formals = [str(x).strip() for x in raw.iloc[1]]   # 正式名
-            labels  = [str(x).strip() for x in raw.iloc[2]]   # %…%
-            data    = raw.iloc[4:].reset_index(drop=True)
-            data.columns = formals                            # 列名を正式名に設定
-            mapping = {lab: formal for lab, formal in zip(labels, formals) if lab and formal}
+            # === データ抽出（3行目 %xx% を列名に） ===
+            labels = [str(x).strip() for x in raw.iloc[2]]  # 3行目（%A1%, %B1%, …）
+            data = raw.iloc[4:].reset_index(drop=True)
+            data.columns = labels
 
             st.info(f"Excelに {len(data)} 行のデータが見つかりました / Found {len(data)} data rows.")
 
@@ -130,9 +127,8 @@ if st.button("🚀 変換を実行 / Run conversion", type="primary"):
                 new_materials = []
                 for m in d["examples"][0]["processes"][0]["materials"]:
                     amount = m.get("amount")
-                    if isinstance(amount, str) and amount in mapping:
-                        col = mapping[amount]
-                        val = row.get(col, "")
+                    if isinstance(amount, str) and amount in row:
+                        val = row[amount]
                         if str(val).strip().lower() in ["", "none", "0", "0.0"]:
                             continue
                         m["amount"] = str(val)
@@ -143,11 +139,11 @@ if st.button("🚀 変換を実行 / Run conversion", type="primary"):
 
                 # --- 全物性（複数%対応）を一括置換 ---
                 for proc in d["examples"][0]["processes"]:
-                    fill_properties(proc.get("properties", []), row, mapping)
+                    fill_properties(proc.get("properties", []), row)
                 for mat in d.get("materials", []):
-                    fill_properties(mat.get("properties", []), row, mapping)
+                    fill_properties(mat.get("properties", []), row)
 
-                # --- 任意の%...%を削除（未置換防止） ---
+                # --- 未置換 %...% を削除（安全処理） ---
                 j_str = json.dumps(d, ensure_ascii=False)
                 j_str = re.sub(r"%[A-Za-z0-9_]+%", "", j_str)
                 d = json.loads(j_str)
