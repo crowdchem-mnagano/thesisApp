@@ -20,7 +20,6 @@ st.markdown("""
 This app performs the following steps:
 
 1. **JSONテンプレートをアップロード**  
-   Upload the JSON template file.  
 2. **Excelデータをアップロード（固定構造）**  
    - 1行目: カテゴリ  
    - 2行目: 正式名  
@@ -32,7 +31,8 @@ This app performs the following steps:
    |------|------|
    | Excel に同じキーがある | 正常置換 |
    | Excel にキーがない | 🔶 warning に出す |
-   | Excel にキーがあって値が空/NaN/"0"/"none" | ⚠️ `{}` ごと削除 |
+   | `"value"` が空欄/NaN/"none" | ⚠️ `{}` ごと削除（CrowdChem仕様） |
+   | `"unit"`, `"name"`, `"memo"` が空欄 | 無視（削除しない） |
    | JSON 内に `%…%` が残った | 🔴 error（%xx%が置換されませんでした） |
 """)
 
@@ -67,29 +67,51 @@ def validate_excel(raw):
     return True, "✅ Excel構造は正常です / Excel structure validated successfully."
 
 # ==========================================
-# conditions / properties / materials の共通置換処理
+# JSON全体を再帰的に探索して置換
 # ==========================================
-def replace_and_clean(obj_list, row, unmatched_keys):
-    """conditions / properties / materials[*].properties に対応。空値なら {} ごと削除。"""
-    if not isinstance(obj_list, list):
-        return []
-    new_list = []
-    for obj in obj_list:
-        v = obj.get("value")
-        if isinstance(v, str):
-            if v in row:  # Excelに同じキーがある
-                val = row[v]
-                if pd.isna(val) or str(val).strip().lower() in ["", "none", "0", "0.0"]:
-                    # 空値は削除対象
-                    continue
+def replace_placeholders_recursively(obj, row, unmatched_keys):
+    """
+    JSON全体を再帰的に探索して、%…% をExcel値で置換。
+    "value" が空欄・NaN・none の場合のみ {} ごと削除（CrowdChem仕様）。
+    unitやname,memoが空でも削除しない。
+    """
+    if isinstance(obj, dict):
+        new_dict = {}
+        for key, value in obj.items():
+            replaced = replace_placeholders_recursively(value, row, unmatched_keys)
+
+            # --- プレースホルダ置換 ---
+            if isinstance(replaced, str) and re.fullmatch(r"%[A-Za-z0-9_]+%", replaced):
+                placeholder = replaced
+                if placeholder in row:
+                    val = row[placeholder]
+                    if pd.isna(val):
+                        replaced = ""
+                    else:
+                        replaced = str(val)
                 else:
-                    obj["value"] = str(val)
-                    new_list.append(obj)
+                    unmatched_keys.add(placeholder)
+                    replaced = replaced  # 残す（後で未一致警告）
+
+            # --- 空欄削除ロジック（"value"キー限定） ---
+            if key == "value" and (pd.isna(replaced) or str(replaced).strip().lower() in ["", "none"]):
+                return None  # ⚠️ CrowdChem仕様：{} ごと削除
             else:
-                unmatched_keys.add(v)  # Excelにキーが存在しない
-        else:
-            new_list.append(obj)
-    return new_list
+                new_dict[key] = replaced
+
+        # 空dictは削除
+        return new_dict if new_dict else None
+
+    elif isinstance(obj, list):
+        new_list = []
+        for item in obj:
+            replaced_item = replace_placeholders_recursively(item, row, unmatched_keys)
+            if replaced_item not in [None, {}, []]:
+                new_list.append(replaced_item)
+        return new_list if new_list else None
+
+    else:
+        return obj
 
 # ==========================================
 # 実行ボタン
@@ -114,10 +136,8 @@ if st.button("🚀 変換を実行 / Run conversion", type="primary"):
                 st.success(msg)
 
             # === Excelデータ準備 ===
-            labels = [str(x).strip() for x in raw.iloc[2]]  # 3行目（プレースホルダ行）を文字列として読み込み
-            # 🔧 ここで自動的に %...% 形式に補正（例: "A1" → "%A1%"）
+            labels = [str(x).strip() for x in raw.iloc[2]]
             labels = [("%" + x.strip("%") + "%") if not str(x).startswith("%") else str(x) for x in labels]
-
             data = raw.iloc[4:].reset_index(drop=True)
             data.columns = labels
 
@@ -133,30 +153,22 @@ if st.button("🚀 変換を実行 / Run conversion", type="primary"):
                 d = deepcopy(json_template)
                 unmatched_keys = set()
 
-                # --- processes 内 conditions/properties ---
-                for proc in d["examples"][0]["processes"]:
-                    proc["conditions"] = replace_and_clean(proc.get("conditions", []), row, unmatched_keys)
-                    proc["properties"] = replace_and_clean(proc.get("properties", []), row, unmatched_keys)
+                # ✅ JSON全体で置換
+                d = replace_placeholders_recursively(d, row, unmatched_keys)
 
-                # --- materials 内 properties ---
-                for mat in d.get("materials", []):
-                    mat["properties"] = replace_and_clean(mat.get("properties", []), row, unmatched_keys)
-
-                # --- 未一致キー収集 ---
+                # ⚠ 未一致キー警告
                 if unmatched_keys:
                     unmatched_keys_global |= unmatched_keys
                     st.warning(f"⚠ 未一致プレースホルダ（行 {idx+1}）: {', '.join(sorted(unmatched_keys))}")
 
-                # --- 未置換プレースホルダ検出 ---
+                # ❌ 未置換プレースホルダ検出
                 j_str = json.dumps(d, ensure_ascii=False)
                 leftovers = re.findall(r"%[A-Za-z0-9_]+%", j_str)
                 if leftovers:
                     st.error(f"❌ 未置換プレースホルダがあります（行 {idx+1}）: {', '.join(sorted(set(leftovers)))}")
                     st.stop()
 
-                d = json.loads(j_str)
-
-                # --- 保存 ---
+                # 保存
                 output_path = os.path.join(output_dir, f"{json_filename}_{idx}.json")
                 with open(output_path, "w", encoding="utf-8") as f:
                     json.dump(d, f, ensure_ascii=False, indent=2)
@@ -172,7 +184,6 @@ if st.button("🚀 変換を実行 / Run conversion", type="primary"):
                     zipf.write(file, os.path.basename(file))
             zip_buffer.seek(0)
 
-            # === 終了メッセージ ===
             if unmatched_keys_global:
                 st.warning(f"⚠ 以下のプレースホルダはExcelに存在しませんでした: {', '.join(sorted(unmatched_keys_global))}")
 
