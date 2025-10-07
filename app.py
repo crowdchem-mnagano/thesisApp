@@ -35,6 +35,54 @@ if os.path.exists(output_dir):
     shutil.rmtree(output_dir)
 os.makedirs(output_dir, exist_ok=True)
 
+
+# ==========================================
+# Excelフォーマット検証関数 / Excel validation
+# ==========================================
+def validate_excel(raw):
+    """
+    Excel構造と内容を検証する。
+    問題があれば (False, エラーメッセージ文字列) を返す。
+    """
+    errors = []
+
+    # --- 行数チェック ---
+    if len(raw) < 5:
+        errors.append("❌ 行数が不足しています（最低5行必要：カテゴリ・正式名・%記号・略称・データ）")
+
+    # --- プレースホルダ行(%XX%)の検証 ---
+    if len(raw) >= 3:
+        placeholder_row = raw.iloc[2].tolist()
+        invalid = [f"列{idx+1}" for idx, val in enumerate(placeholder_row)
+                   if not str(val).startswith("%") or not str(val).endswith("%")]
+        if invalid:
+            errors.append(f"❌ 3行目の{', '.join(invalid)} に不正なプレースホルダがあります（'%A1%' のような形式が必要）")
+
+    # --- 略称行の空欄チェック ---
+    if len(raw) >= 4:
+        abbr_row = raw.iloc[3].tolist()
+        empty_abbr = [f"列{idx+1}" for idx, val in enumerate(abbr_row)
+                      if str(val).strip() == "" or str(val).lower() == "nan"]
+        if empty_abbr:
+            errors.append(f"⚠️ 4行目の{', '.join(empty_abbr)} が空欄です（略称が必要）")
+
+    # --- 正式名行とプレースホルダ行の列数一致 ---
+    if len(raw) >= 3 and len(raw.iloc[1]) != len(raw.iloc[2]):
+        errors.append("❌ 2行目（正式名）と3行目（プレースホルダ）の列数が一致していません。")
+
+    # --- データ行（5行目以降）の空行チェック ---
+    if len(raw) >= 5:
+        data = raw.iloc[4:].fillna("")
+        for r_idx, row in data.iterrows():
+            if all(str(x).strip() == "" for x in row):
+                errors.append(f"⚠️ データが空の行があります（Excel {r_idx + 5} 行目）")
+
+    if errors:
+        return False, "\n".join(errors)
+    else:
+        return True, "✅ Excel構造は正常です。"
+
+
 # ==========================================
 # プロパティ置換関数 / Property replacement function
 # ==========================================
@@ -52,6 +100,7 @@ def fill_properties(props, row, mapping):
             else:
                 prop["value"] = str(val)
 
+
 # ==========================================
 # 処理実行ボタン / Execute process button
 # ==========================================
@@ -62,34 +111,38 @@ if st.button("🚀 変換を実行 / Run conversion", type="primary"):
         try:
             # JSONテンプレート読み込み
             json_template = json.load(json_file)
-
-            # JSONファイル名（拡張子なし）を取得
             json_filename = os.path.splitext(os.path.basename(json_file.name))[0]
 
             # Excel読み込み
-            raw = pd.read_excel(excel_file, header=None)
-            raw = raw.astype(str)  # NaN混入を防ぐ（Streamlit必須）
+            raw = pd.read_excel(excel_file, header=None, dtype=str)
+            raw = raw.fillna("")
 
-            # 2行目: 正式名
-            formals = [str(x).strip() for x in raw.iloc[1]]
-            # 3行目: プレースホルダ
-            labels = [str(x).strip() for x in raw.iloc[2]]
-            # 4行目（略称）は無視
-            # 5行目以降: データ
-            data = raw.iloc[4:].reset_index(drop=True)
-            data.columns = formals
+            # === 構造検証 ===
+            ok, msg = validate_excel(raw)
+            if not ok:
+                st.error("Excelフォーマットに問題があります：")
+                st.error(msg)
+                st.stop()
+            else:
+                st.success(msg)
 
-            # プレースホルダ→正式名の対応表
-            mapping = {lab: formal for lab, formal in zip(labels, formals) if lab and formal}
+            # === データ抽出 ===
+            formals = [str(x).strip() for x in raw.iloc[1]]  # 正式名
+            labels = [str(x).strip() for x in raw.iloc[2]]   # プレースホルダ
+            abbrs  = [str(x).strip() for x in raw.iloc[3]]   # 略称
+            data   = raw.iloc[4:].reset_index(drop=True)     # データ本体
+            data.columns = abbrs
+
+            # プレースホルダ→略称対応表
+            mapping = {lab: abbr for lab, abbr in zip(labels, abbrs) if lab and abbr}
 
             st.info(f"Excelに {len(data)} 行のデータが見つかりました。")
 
-            # 進捗バー
+            # === 各行ごとの処理 ===
             progress_bar = st.progress(0)
             status_text = st.empty()
             generated_files = []
 
-            # データ行ごとに処理
             for idx, row in data.iterrows():
                 d = deepcopy(json_template)
 
@@ -99,11 +152,10 @@ if st.button("🚀 変換を実行 / Run conversion", type="primary"):
                     amount = m.get("amount")
                     if isinstance(amount, str) and amount in mapping:
                         col = mapping[amount]
-                        val = row[col] if col in row else None
-                        v = "" if val is None else str(val).strip()
-                        # 空欄・none・0 は削除
-                        if v == "" or v.lower() == "none" or v in {"0", "0.0"}:
-                            continue
+                        val = row[col] if col in row else ""
+                        v = str(val).strip()
+                        if v in ["", "none", "0", "0.0"]:
+                            continue  # 未入力・0は削除
                         m["amount"] = v
                     else:
                         if not amount or (isinstance(amount, str) and amount.startswith("%")):
@@ -114,18 +166,14 @@ if st.button("🚀 変換を実行 / Run conversion", type="primary"):
                 # --- properties（プロセス内） ---
                 for proc in d["examples"][0]["processes"]:
                     fill_properties(proc.get("properties", []), row, mapping)
-
                 # --- ルート直下 materials[*].properties も置換 ---
                 for mat in d.get("materials", []):
                     fill_properties(mat.get("properties", []), row, mapping)
 
-                # --- 未置換プレースホルダ確認 ---
+                # --- 未置換プレースホルダ削除 ---
                 j_str = json.dumps(d, ensure_ascii=False)
-                leftovers = re.findall(r"%[A-Za-z0-9]+%", j_str)
-                if leftovers:
-                    st.warning(f"未置換のプレースホルダがあります（idx={idx}）: {', '.join(sorted(set(leftovers)))}")
-                    j_str = re.sub(r"%[A-Za-z0-9]+%", "", j_str)
-                    d = json.loads(j_str)
+                j_str = re.sub(r"%[A-Za-z0-9]+%", "", j_str)
+                d = json.loads(j_str)
 
                 # --- 保存 ---
                 output_path = os.path.join(output_dir, f"{json_filename}_{idx}.json")
