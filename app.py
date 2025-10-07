@@ -18,27 +18,28 @@ st.markdown("""
 ### このアプリの機能 / About this tool
 
 このアプリは、ExcelファイルとJSONテンプレートを使用して、自動でJSONデータを生成します。  
-This app generates JSON files automatically using an Excel data file and a JSON template.
+This app automatically generates JSON files using an Excel data file and a JSON template.
 
-#### 処理内容 / Workflow:
+#### 処理手順 / Workflow:
 1. JSONテンプレートをアップロード  
    Upload a JSON template.  
 2. Excelファイルをアップロード（以下の形式に従う）  
    Upload an Excel file with the following structure:
    - 1行目: カテゴリ / Row 1: Category  
    - 2行目: 正式名 / Row 2: Formal name  
-   - 3行目: プレースホルダ (%A1%, %B1%, …) / Row 3: Placeholders (%A1%, %B1%, …)  
+   - 3行目: プレースホルダ（必ず `%A1%` のような形式） / Row 3: Placeholders (must be in `%A1%` format)  
    - 4行目: 略称（任意） / Row 4: Abbreviations (optional)  
-   - 5行目以降: データ（数値または文字列） / Row 5 onward: Data values  
+   - 5行目以降: データ / Row 5 onward: Data values  
 
-#### 置換処理のルール / Replacement Rules:
+#### 置換ルール / Replacement Rules:
 | 条件 / Condition | 動作 / Action |
 |------------------|---------------|
 | Excelに同じキーがある / Key exists in Excel | 該当値に置換 / Replace normally |
 | Excelにキーがない / Key not found in Excel | 警告を表示 / Show warning |
-| `"value"` または `"amount"` が空欄・NaN・"none" | `{}` ごと削除（CrowdChem仕様） / Delete the entire object |
+| `"value"` または `"amount"` が空欄・NaN・"none" | `{}` 削除 / Delete the entire object |
 | `"unit"`, `"name"`, `"memo"` が空欄 | 無視（削除しない） / Keep as is (not deleted) |
 | JSON内に `%…%` が残っている | エラーで停止 / Stop with error |
+| 3行目のセルが `%…%` 形式でない | エラーで停止 / Stop if placeholders are invalid |
 """)
 
 # ==========================================
@@ -62,11 +63,11 @@ def validate_excel(raw):
     if len(raw) >= 3:
         placeholder_row = raw.iloc[2].tolist()
         invalid = [f"列 {idx+1}" for idx, val in enumerate(placeholder_row)
-                   if not re.match(r"^%[A-Za-z0-9_]+%$", str(val).strip())]
+                   if not re.fullmatch(r"%[A-Za-z0-9_]+%", str(val).strip())]
         if invalid:
             errors.append(f"3行目の{', '.join(invalid)} に不正なプレースホルダがあります / Invalid placeholders in row 3: {', '.join(invalid)}.")
     if len(raw) >= 3 and len(raw.iloc[1]) != len(raw.iloc[2]):
-        errors.append("2行目と3行目の列数が一致していません / Row 2 and Row 3 column counts differ.")
+        errors.append("2行目と3行目の列数が一致していません / Row 2 and row 3 column counts differ.")
     if errors:
         return False, "\n".join(errors)
     return True, "Excel構造は正常です / Excel structure validated successfully."
@@ -108,7 +109,6 @@ def replace_placeholders_recursively(obj, row, unmatched_keys):
             else:
                 new_dict[key] = replaced
 
-        # 空dictは削除 / Remove empty dictionaries
         return new_dict if new_dict else None
 
     elif isinstance(obj, list):
@@ -137,6 +137,7 @@ if st.button("変換を実行 / Run Conversion", type="primary"):
             # === Excel読み込み / Read Excel ===
             raw = pd.read_excel(excel_file, header=None, dtype=str).fillna("")
 
+            # === 構造検証 / Validate Excel structure ===
             ok, msg = validate_excel(raw)
             if not ok:
                 st.error(msg)
@@ -144,9 +145,8 @@ if st.button("変換を実行 / Run Conversion", type="primary"):
             else:
                 st.success(msg)
 
-            # === Excelデータ準備 / Prepare Excel Data ===
+            # === プレースホルダ（3行目）をそのまま使用 / Use row 3 placeholders directly ===
             labels = [str(x).strip() for x in raw.iloc[2]]
-            labels = [("%" + x.strip("%") + "%") if not str(x).startswith("%") else str(x) for x in labels]
             data = raw.iloc[4:].reset_index(drop=True)
             data.columns = labels
 
