@@ -70,37 +70,36 @@ if st.button("🚀 変換を実行 / Run conversion", type="primary"):
             # JSONテンプレート読み込み / Load JSON template
             json_template = json.load(json_file)
 
-            # アップロードしたJSONファイル名（拡張子なし）を取得
-            # Get uploaded JSON file name (without extension)
+            # JSONファイル名（拡張子なし）を取得
             json_filename = os.path.splitext(os.path.basename(json_file.name))[0]
 
-            # Excel読み込み（header=None で行指定）
-            # Read Excel (header=None for row specification)
+            # Excel読み込み / Read Excel
             raw = pd.read_excel(excel_file, header=None)
+            raw = raw.astype(str)  # ★追加：StreamlitでNaNやfloat混入を防ぐ
 
             # 1行目: 正式名 / Row 1: Formal names
             formals = [str(x).strip() for x in raw.iloc[1]]
             # 2行目: プレースホルダ / Row 2: Placeholders
             labels = [str(x).strip() for x in raw.iloc[2]]
-            # プレースホルダ→正式名の対応表 / Mapping: placeholder → formal name
+            # プレースホルダ→正式名の対応表
             mapping = {lab: formal for lab, formal in zip(labels, formals) if lab and formal}
 
-            # 4行目以降: データ本体 / From row 4 onward: Main data
+            # 4行目以降: データ本体
             data = raw.iloc[4:].reset_index(drop=True)
             data.columns = formals
 
             st.info(f"Excelに {len(data)} 行のデータが見つかりました。 / Found {len(data)} rows of data in Excel.")
 
-            # 進捗バー / Progress bar
+            # 進捗バー
             progress_bar = st.progress(0)
             status_text = st.empty()
             generated_files = []
 
-            # データ行ごとに処理 / Process row by row
+            # データ行ごとに処理
             for idx, row in data.iterrows():
                 d = deepcopy(json_template)
 
-                # --- materials（最初のprocess） / First process materials ---
+                # --- materials（最初のprocess） ---
                 new_materials = []
                 for m in d["examples"][0]["processes"][0]["materials"]:
                     amount = m.get("amount")
@@ -108,56 +107,53 @@ if st.button("🚀 変換を実行 / Run conversion", type="primary"):
                         col = mapping[amount]
                         val = row[col] if col in row else None
                         if pd.isna(val) or str(val).strip().lower() in ["", "none"]:
-                            continue  # {}ごと削除 / delete entire {}
+                            continue
                         m["amount"] = str(val)
                     else:
-                        # プレースホルダや空欄は削除 / Remove placeholders or blanks
                         if not amount or (isinstance(amount, str) and amount.startswith("%")):
                             continue
                     new_materials.append(m)
                 d["examples"][0]["processes"][0]["materials"] = new_materials
 
-                # --- properties（プロセス内） / Properties inside process ---
+                # --- properties（プロセス内） ---
                 for proc in d["examples"][0]["processes"]:
                     fill_properties(proc.get("properties", []), row, mapping)
 
-                # --- ルート直下 materials[*].properties も置換
-                # Replace also root-level materials[*].properties
+                # --- ルート直下 materials[*].properties も置換 ---
                 for mat in d.get("materials", []):
                     fill_properties(mat.get("properties", []), row, mapping)
 
-                # --- 未置換プレースホルダ確認 / Check for unreplaced placeholders ---
+                # --- 未置換プレースホルダ確認 ---
                 j_str = json.dumps(d, ensure_ascii=False)
                 leftovers = re.findall(r"%[A-Za-z0-9]+%", j_str)
                 if leftovers:
-                    st.warning(f"未置換のプレースホルダがあります（idx={idx}）: {', '.join(sorted(set(leftovers)))} / Unreplaced placeholders found (idx={idx}): {', '.join(sorted(set(leftovers)))}")
-                    # 未置換を空文字に強制置換 / Force replace leftovers with empty string
+                    st.warning(f"未置換のプレースホルダがあります（idx={idx}）: {', '.join(sorted(set(leftovers)))}")
                     j_str = re.sub(r"%[A-Za-z0-9]+%", "", j_str)
                     d = json.loads(j_str)
 
-                # --- 保存 / Save ---
+                # --- 保存 ---
                 output_path = os.path.join(output_dir, f"{json_filename}_{idx}.json")
                 with open(output_path, "w", encoding="utf-8") as f:
                     json.dump(d, f, ensure_ascii=False, indent=2)
                 generated_files.append(output_path)
 
                 progress_bar.progress((idx + 1) / len(data))
-                status_text.text(f"{idx+1}/{len(data)} 件処理完了 / {idx+1}/{len(data)} rows processed")
+                status_text.text(f"{idx+1}/{len(data)} 件処理完了")
 
-            # ZIP化してダウンロード / Zip and download
+            # ZIP化してダウンロード
             zip_buffer = BytesIO()
             with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
                 for file in generated_files:
                     zipf.write(file, os.path.basename(file))
             zip_buffer.seek(0)
 
-            st.success("✅ 変換が完了しました！ /✅ Conversion completed successfully!")
+            st.success("✅ 変換が完了しました！")
             st.download_button(
-                "出力結果をダウンロード (ZIP) / Download results (ZIP)",
+                "出力結果をダウンロード (ZIP)",
                 data=zip_buffer,
                 file_name=f"{json_filename}_output.zip",
                 mime="application/zip"
             )
 
         except Exception as e:
-            st.error(f"エラーが発生しました: {e} / An error occurred: {e}")
+            st.error(f"エラーが発生しました: {e}")
