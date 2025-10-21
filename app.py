@@ -12,7 +12,7 @@ import zipfile
 # Streamlit UI
 # ==========================================
 st.set_page_config(page_title="Excel→JSON tool", layout="wide")
-st.title("Excel → JSON tool ver2.8")
+st.title("Excel → JSON tool ver2.9")
 
 st.markdown("""
 ### このアプリの機能 / About this tool
@@ -28,7 +28,7 @@ This app automatically generates JSON files using an Excel data file and a JSON 
    - 1行目: カテゴリ / Row 1: Category  
    - 2行目: 正式名 / Row 2: Formal name  
    - 3行目: プレースホルダ（必ず `%A1%` のような形式） / Row 3: Placeholders (must be in `%A1%` format)  
-   - 4行目: 論文に載っている略称 / Row 4: Abbreviations written the paper  
+   - 4行目: 論文に載っている略称 / Row 4: Abbreviations written in the paper  
    - 5行目以降: データ / Row 5 onward: Data values  
 
 #### 置換ルール / Replacement Rules:
@@ -36,8 +36,10 @@ This app automatically generates JSON files using an Excel data file and a JSON 
 |------------------|---------------|
 | Excelに同じキーがある / Key exists in Excel | 該当値に置換 / Replace normally |
 | Excelにキーがない / Key not found in Excel | 警告を表示 / Show warning |
-| `"value"` または `"amount"` が空欄・NaN・"none" | `{}` 削除 / Delete the entire object |
-| `"unit"`, `"name"`, `"memo"` が空欄 | 無視（削除しない） / Keep as is (not deleted) |
+| `"value"` または `"amount"` が空欄・NaN・"none" | **該当オブジェクトを削除** / **Delete the entire object** |
+| **それ以外のキー**（例：`"unit"`, `"name"`, `"memo"`, `"smiles"`, `"properties"`, `"conditions"` など） | **空でも削除しない**（`null`禁止）/ **Keep as is** (`null` is prohibited) |
+| **リスト要素が空** | `[]` に統一 / Always output `[]` |
+| **辞書要素が空** | `{}` に統一 / Always output `{}` |
 | JSON内に `%…%` が残っている | エラーで停止 / Stop with error |
 | 3行目のセルが `%…%` 形式でない | エラーで停止 / Stop if placeholders are invalid |
 """)
@@ -56,7 +58,7 @@ os.makedirs(output_dir, exist_ok=True)
 # ==========================================
 # Excelフォーマット検証 / Excel Structure Validation
 # ==========================================
-def validate_excel(raw):
+def validate_excel(raw: pd.DataFrame):
     errors = []
     if len(raw) < 5:
         errors.append("行数が不足しています（最低5行必要） / Not enough rows (minimum 5 required).")
@@ -75,52 +77,65 @@ def validate_excel(raw):
 # ==========================================
 # JSON全体を再帰的に探索して置換 / Recursive JSON Replacement
 # ==========================================
-def replace_placeholders_recursively(obj, row, unmatched_keys):
+def replace_placeholders_recursively(obj, row: pd.Series, unmatched_keys: set):
     """
     JSON全体を再帰的に探索して、%…% をExcel値で置換します。
-    Recursively traverse JSON to replace all %...% placeholders using Excel values.
-
-    "value" または "amount" が空欄・NaN・none の場合のみ、そのオブジェクトを削除（CrowdChem仕様）。
-    Only delete objects where "value" or "amount" is empty, NaN, or "none".
-    "unit", "name", "memo" が空欄の場合は削除しません。
-    "unit", "name", and "memo" are kept even if empty.
+    - "value" または "amount" が空欄・NaN・"none" の場合のみ、そのオブジェクト（現在の辞書）を削除（Noneを返す）。
+    - それ以外は削除しない。リストは空でも []、辞書は空でも {} を返す。
+    - 子が None（削除）になった場合、親の辞書には key を追加しない（nullを残さない）。
     """
-    if isinstance(obj, dict):
-        new_dict = {}
-        for key, value in obj.items():
-            replaced = replace_placeholders_recursively(value, row, unmatched_keys)
+    # --- 文字列（プレースホルダ） ---
+    if isinstance(obj, str) and re.fullmatch(r"%[A-Za-z0-9_]+%", obj):
+        placeholder = obj
+        if placeholder in row:
+            val = row[placeholder]
+            if pd.isna(val):
+                return ""  # 空欄は空文字に
+            return str(val)
+        else:
+            unmatched_keys.add(placeholder)
+            return obj  # そのまま残し、後で検知
 
-            # --- プレースホルダ置換 / Replace placeholder ---
-            if isinstance(replaced, str) and re.fullmatch(r"%[A-Za-z0-9_]+%", replaced):
-                placeholder = replaced
-                if placeholder in row:
-                    val = row[placeholder]
-                    if pd.isna(val):
-                        replaced = ""
-                    else:
-                        replaced = str(val)
-                else:
-                    unmatched_keys.add(placeholder)
-                    replaced = replaced  # keep as is for later warning
-
-            # --- 空欄削除ロジック / Deletion rule for empty values ---
-            if key in ["value", "amount"] and (pd.isna(replaced) or str(replaced).strip().lower() in ["", "none"]):
-                return None  # delete the whole object
-            else:
-                new_dict[key] = replaced
-
-        return new_dict if new_dict else None
-
-    elif isinstance(obj, list):
+    # --- 配列 ---
+    if isinstance(obj, list):
         new_list = []
         for item in obj:
             replaced_item = replace_placeholders_recursively(item, row, unmatched_keys)
-            if replaced_item not in [None, {}, []]:
-                new_list.append(replaced_item)
-        return new_list if new_list else None
+            # 子が削除（None）の場合はスキップ。空辞書{}や空配列[]は採用しない（要素として意味が薄い場合が多いため）
+            if replaced_item is None:
+                continue
+            if replaced_item in ({}, []):
+                # リスト要素としての空{}や[]は実用上ノイズになりやすいので除外
+                continue
+            new_list.append(replaced_item)
+        # 空でも [] を返す（null禁止）
+        return new_list
 
-    else:
-        return obj
+    # --- 辞書 ---
+    if isinstance(obj, dict):
+        new_dict = {}
+        # まず子を処理
+        for key, value in obj.items():
+            replaced = replace_placeholders_recursively(value, row, unmatched_keys)
+
+            # "value"/"amount" の削除ルール（このキーの値が空/noneなら、**このオブジェクト自体を削除**）
+            if key in ["value", "amount"]:
+                # 空・NaN・"none" は削除トリガ
+                if (replaced is None) or (isinstance(replaced, str) and replaced.strip().lower() in ["", "none"]):
+                    return None
+
+            # 子が削除された（None）なら親辞書に key を追加しない（key:null を避ける）
+            if replaced is None:
+                continue
+
+            # それ以外は通常どおり採用。空文字 "" / 空辞書 {} / 空配列 [] も許容（構造保持）
+            new_dict[key] = replaced
+
+        # 空でも {} を返す（null禁止）
+        return new_dict
+
+    # --- それ以外（数値・bool・None等） ---
+    return obj
 
 # ==========================================
 # 実行ボタン / Execute Conversion
@@ -135,7 +150,7 @@ if st.button("変換を実行 / Run Conversion", type="primary"):
             json_filename = os.path.splitext(os.path.basename(json_file.name))[0]
 
             # === Excel読み込み / Read Excel ===
-            raw = pd.read_excel(excel_file, header=None, dtype=str).fillna("")
+            raw = pd.read_excel(excel_file, header=None, dtype=str)
 
             # === 構造検証 / Validate Excel structure ===
             ok, msg = validate_excel(raw)
@@ -148,6 +163,8 @@ if st.button("変換を実行 / Run Conversion", type="primary"):
             # === プレースホルダ（3行目）をそのまま使用 / Use row 3 placeholders directly ===
             labels = [str(x).strip() for x in raw.iloc[2]]
             data = raw.iloc[4:].reset_index(drop=True)
+            # 空欄セルは NaN ではなく空文字に（仕様に合わせる）
+            data = data.fillna("")
             data.columns = labels
 
             st.info(f"Excelに {len(data)} 行のデータが見つかりました / Found {len(data)} data rows.")
