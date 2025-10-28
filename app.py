@@ -12,7 +12,7 @@ import zipfile
 # Streamlit UI
 # ==========================================
 st.set_page_config(page_title="Excel→JSON tool", layout="wide")
-st.title("Excel → JSON tool ver2.9")
+st.title("Excel → JSON tool ver3.0")
 
 st.markdown("""
 ### このアプリの機能 / About this tool
@@ -90,7 +90,7 @@ def replace_placeholders_recursively(obj, row: pd.Series, unmatched_keys: set):
         if placeholder in row:
             val = row[placeholder]
             if pd.isna(val):
-                return ""  # 空欄は空文字に
+                return "異常値"  # 空欄は空文字に
             return str(val)
         else:
             unmatched_keys.add(placeholder)
@@ -102,11 +102,11 @@ def replace_placeholders_recursively(obj, row: pd.Series, unmatched_keys: set):
         for item in obj:
             replaced_item = replace_placeholders_recursively(item, row, unmatched_keys)
             # 子が削除（None）の場合はスキップ。空辞書{}や空配列[]は採用しない（要素として意味が薄い場合が多いため）
-            if replaced_item is None:
+            if replaced_item is "異常値":
                 continue
-            if replaced_item in ({}, []):
-                # リスト要素としての空{}や[]は実用上ノイズになりやすいので除外
-                continue
+            # if replaced_item in ({}, []):
+            #     # リスト要素としての空{}や[]は実用上ノイズになりやすいので除外
+            #     continue
             new_list.append(replaced_item)
         # 空でも [] を返す（null禁止）
         return new_list
@@ -119,13 +119,14 @@ def replace_placeholders_recursively(obj, row: pd.Series, unmatched_keys: set):
             replaced = replace_placeholders_recursively(value, row, unmatched_keys)
 
             # "value"/"amount" の削除ルール（このキーの値が空/noneなら、**このオブジェクト自体を削除**）
-            if key in ["value", "amount"]:
+            # if key in ["value", "amount"]:
                 # 空・NaN・"none" は削除トリガ
-                if (replaced is None) or (isinstance(replaced, str) and replaced.strip().lower() in ["", "none"]):
-                    return None
+                # if (replaced is None) or (isinstance(replaced, str) and replaced.strip().lower() in ["", "none"]):
+                #     return None
 
             # 子が削除された（None）なら親辞書に key を追加しない（key:null を避ける）
-            if replaced is None:
+            if replaced == "異常値":
+                print("該当")
                 continue
 
             # それ以外は通常どおり採用。空文字 "" / 空辞書 {} / 空配列 [] も許容（構造保持）
