@@ -17,31 +17,36 @@ st.title("Excel → JSON tool ver3.0")
 st.markdown("""
 ### このアプリの機能 / About this tool
 
-このアプリは、ExcelファイルとJSONテンプレートを使用して、自動でJSONデータを生成します。  
-This app automatically generates JSON files using an Excel data file and a JSON template.
+このアプリは、ExcelファイルとJSONテンプレートを使用して、自動で複数のJSONファイルを生成します。  
+This app automatically generates multiple JSON files using an Excel data file and a JSON template.
 
 #### 処理手順 / Workflow:
-1. JSONテンプレートをアップロード  
-   Upload a JSON template.  
-2. Excelファイルをアップロード（以下の形式に従う）  
-   Upload an Excel file with the following structure:
-   - 1行目: カテゴリ / Row 1: Category  
-   - 2行目: 正式名 / Row 2: Formal name  
-   - 3行目: プレースホルダ（必ず `%A1%` のような形式） / Row 3: Placeholders (must be in `%A1%` format)  
-   - 4行目: 論文に載っている略称 / Row 4: Abbreviations written in the paper  
-   - 5行目以降: データ / Row 5 onward: Data values  
+1. **JSONテンプレートをアップロード**  
+   Upload a JSON template file (with placeholders like `%A1%`).
+2. **Excelファイルをアップロード**  
+   Upload an Excel file formatted as follows:
+   - **1行目:** カテゴリ / Category  
+   - **2行目:** 正式名（日本語名など） / Formal name  
+   - **3行目:** プレースホルダ（必ず `%A1%` のような形式） / Placeholders (must be in `%A1%` format)  
+   - **4行目:** 論文などに記載の略称（任意） / Abbreviation (optional)  
+   - **5行目以降:** 各データ行 / Data rows (each will produce one JSON file)
 
-#### 置換ルール / Replacement Rules:
-| 条件 / Condition | 動作 / Action |
-|------------------|---------------|
-| Excelに同じキーがある / Key exists in Excel | 該当値に置換 / Replace normally |
-| Excelにキーがない / Key not found in Excel | 警告を表示 / Show warning |
-| `"value"` または `"amount"` が空欄・NaN・"none" | **該当オブジェクトを削除** / **Delete the entire object** |
-| **それ以外のキー**（例：`"unit"`, `"name"`, `"memo"`, `"smiles"`, `"properties"`, `"conditions"` など） | **空でも削除しない**（`null`禁止）/ **Keep as is** (`null` is prohibited) |
-| **リスト要素が空** | `[]` に統一 / Always output `[]` |
-| **辞書要素が空** | `{}` に統一 / Always output `{}` |
-| JSON内に `%…%` が残っている | エラーで停止 / Stop with error |
-| 3行目のセルが `%…%` 形式でない | エラーで停止 / Stop if placeholders are invalid |
+#### 置換および整形ルール / Replacement & Formatting Rules:
+| 条件 / Condition | 動作 / Behavior |
+|------------------|----------------|
+| Excelに同じキーがある / Key exists in Excel | Excelの値で置換 / Replace normally |
+| Excelにキーがない / Key not found in Excel | 警告を表示（置換は行わない） / Show warning (keep placeholder) |
+| `"value"` または `"amount"` が空欄・NaN・"none" | **削除せず `"異常値"` としてマーク** / **Marked as `"異常値"`, not deleted** |
+| それ以外のキー (`unit`, `name`, `memo`, `smiles`, `properties`, `conditions` など) | 空でも削除しない (`null`禁止) / Keep even if empty (no `null`) |
+| リスト要素が空 / Empty list | `[]` を出力 / Output as `[]` |
+| 辞書要素が空 / Empty dict | `{}` を出力 / Output as `{}` |
+| JSON内に `%…%` が残っている / Unreplaced placeholders remain | エラーで停止 / Stop with error |
+| 3行目のセルが `%…%` 形式でない / Invalid placeholder format | エラーで停止 / Stop with error |
+
+#### 出力仕様 / Output:
+- 各データ行から1つのJSONファイルを生成します。  
+- 出力ファイルはZIPにまとめてダウンロード可能です。  
+- 未置換プレースホルダやExcelに存在しないキーは警告として表示されます。
 """)
 
 # ==========================================
